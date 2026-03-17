@@ -1,0 +1,9 @@
+# Benchmark Data
+
+Place the exported CSV files here:
+
+- `benchmark-standard.csv`
+- `benchmark-block.csv`
+- `benchmark-virtualized.csv`
+
+Generated charts and GIFs will be saved to `charts/` and `gifs/` subdirectories.
