@@ -1,26 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
+import { useState, useRef, useCallback, useLayoutEffect } from "react";
 import "streamdown/styles.css";
 import "katex/dist/katex.min.css";
 import { MASSIVE_MARKDOWN } from "./content";
+import { useStreamEngine } from "./useStreamEngine";
+import { VirtualizedStream } from "./VirtualizedStream";
 
 const CHARS_PER_TICK = 12;
 const TICK_INTERVAL_MS = 8;
 
 function App() {
-  const [text, setText] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
   const [speed, setSpeed] = useState(CHARS_PER_TICK);
-  const [progress, setProgress] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const indexRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  const startTimeRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const autoScrollRef = useRef(true);
+
+  const engine = useStreamEngine(MASSIVE_MARKDOWN, speed, TICK_INTERVAL_MS);
+
+  // --- scroll helpers ---
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
@@ -37,86 +33,59 @@ function App() {
     setAutoScroll(true);
   }, []);
 
-  useEffect(() => {
-    if (!isStreaming) return;
+  // Keep viewport pinned to the bottom while auto-scroll is on.
+  // useLayoutEffect runs after DOM commit but before paint, so the
+  // user never sees the scroll lag behind the new content.
+  useLayoutEffect(() => {
+    if (!autoScrollRef.current || engine.blocks.length === 0) return;
+    containerRef.current?.scrollTo({
+      top: containerRef.current.scrollHeight,
+    });
+  }, [engine.blocks]);
 
-    startTimeRef.current = Date.now();
-    timerRef.current = setInterval(() => {
-      const nextIndex = Math.min(
-        indexRef.current + speed,
-        MASSIVE_MARKDOWN.length
-      );
-      const chunk = MASSIVE_MARKDOWN.slice(0, nextIndex);
-      indexRef.current = nextIndex;
-      setText(chunk);
-      setProgress((nextIndex / MASSIVE_MARKDOWN.length) * 100);
-      setElapsedMs(Date.now() - startTimeRef.current);
+  // --- derived stats ---
 
-      if (autoScrollRef.current && containerRef.current) {
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
-      }
+  const charsStreamed = Math.round(
+    (engine.progress / 100) * engine.totalChars
+  );
+  const charsPerSecond =
+    engine.elapsedMs > 0
+      ? Math.round((charsStreamed / engine.elapsedMs) * 1000)
+      : 0;
 
-      if (nextIndex >= MASSIVE_MARKDOWN.length) {
-        clearInterval(timerRef.current);
-        setIsStreaming(false);
-      }
-    }, TICK_INTERVAL_MS);
+  // --- actions ---
 
-    return () => clearInterval(timerRef.current);
-  }, [isStreaming, speed]);
-
-  const startStream = () => {
-    indexRef.current = 0;
-    setText("");
-    setProgress(0);
-    setElapsedMs(0);
+  const startStream = useCallback(() => {
     autoScrollRef.current = true;
     setAutoScroll(true);
-    setIsStreaming(true);
-  };
-
-  const stopStream = () => {
-    clearInterval(timerRef.current);
-    setIsStreaming(false);
-  };
-
-  const resetStream = () => {
-    clearInterval(timerRef.current);
-    setIsStreaming(false);
-    indexRef.current = 0;
-    setText("");
-    setProgress(0);
-    setElapsedMs(0);
-  };
-
-  const charsStreamed = indexRef.current;
-  const charsPerSecond =
-    elapsedMs > 0 ? Math.round((charsStreamed / elapsedMs) * 1000) : 0;
+    engine.start();
+  }, [engine.start]);
 
   return (
     <div className="app">
       <header className="header">
         <h1>Streamdown Massive Stream Demo</h1>
         <p className="subtitle">
-          Simulating massive AI streaming output — {MASSIVE_MARKDOWN.length.toLocaleString()} characters
+          Simulating massive AI streaming output &mdash;{" "}
+          {engine.totalChars.toLocaleString()} characters
         </p>
       </header>
 
       <div className="controls">
         <div className="controls-row">
-          {!isStreaming ? (
+          {!engine.isStreaming ? (
             <button className="btn btn-primary" onClick={startStream}>
-              {text ? "Restart Stream" : "Start Stream"}
+              {engine.blocks.length > 0 ? "Restart Stream" : "Start Stream"}
             </button>
           ) : (
-            <button className="btn btn-danger" onClick={stopStream}>
+            <button className="btn btn-danger" onClick={engine.stop}>
               Stop
             </button>
           )}
           <button
             className="btn btn-secondary"
-            onClick={resetStream}
-            disabled={isStreaming}
+            onClick={engine.reset}
+            disabled={engine.isStreaming}
           >
             Reset
           </button>
@@ -140,28 +109,38 @@ function App() {
       <div className="stats-bar">
         <div className="stat">
           <span className="stat-label">Progress</span>
-          <span className="stat-value">{progress.toFixed(1)}%</span>
+          <span className="stat-value">{engine.progress.toFixed(1)}%</span>
         </div>
         <div className="stat">
-          <span className="stat-label">Chars Streamed</span>
+          <span className="stat-label">Chars</span>
           <span className="stat-value">
-            {charsStreamed.toLocaleString()} / {MASSIVE_MARKDOWN.length.toLocaleString()}
+            {charsStreamed.toLocaleString()} /{" "}
+            {engine.totalChars.toLocaleString()}
           </span>
         </div>
         <div className="stat">
           <span className="stat-label">Speed</span>
           <span className="stat-value">
-            {charsPerSecond.toLocaleString()} chars/sec
+            {charsPerSecond.toLocaleString()} c/s
           </span>
         </div>
         <div className="stat">
           <span className="stat-label">Elapsed</span>
-          <span className="stat-value">{(elapsedMs / 1000).toFixed(1)}s</span>
+          <span className="stat-value">
+            {(engine.elapsedMs / 1000).toFixed(1)}s
+          </span>
+        </div>
+        <div className="stat">
+          <span className="stat-label">Blocks</span>
+          <span className="stat-value">{engine.blocks.length}</span>
         </div>
       </div>
 
       <div className="progress-bar-container">
-        <div className="progress-bar" style={{ width: `${progress}%` }} />
+        <div
+          className="progress-bar"
+          style={{ width: `${engine.progress}%` }}
+        />
       </div>
 
       <div className="stream-wrapper">
@@ -170,15 +149,12 @@ function App() {
           ref={containerRef}
           onScroll={handleScroll}
         >
-          {text ? (
-            <Streamdown
-              plugins={{ code, math }}
-              isAnimating={isStreaming}
-              animated
-              caret={isStreaming ? "block" : undefined}
-            >
-              {text}
-            </Streamdown>
+          {engine.blocks.length > 0 ? (
+            <VirtualizedStream
+              blocks={engine.blocks}
+              isStreaming={engine.isStreaming}
+              scrollElementRef={containerRef}
+            />
           ) : (
             <div className="empty-state">
               Press <strong>Start Stream</strong> to begin the massive streaming
@@ -186,10 +162,16 @@ function App() {
             </div>
           )}
         </div>
-        {isStreaming && !autoScroll && (
+        {engine.isStreaming && !autoScroll && (
           <button className="scroll-to-bottom" onClick={scrollToBottom}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 3v10m0 0l-4-4m4 4l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path
+                d="M8 3v10m0 0l-4-4m4 4l4-4"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
             Follow stream
           </button>
