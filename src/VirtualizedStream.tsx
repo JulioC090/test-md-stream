@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from "react";
+import { memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
@@ -32,50 +32,6 @@ const StreamdownBlock = memo(function StreamdownBlock({
       {content}
     </Streamdown>
   );
-});
-
-/**
- * Wrapper that shows a loading spinner on first mount (1-2 frames),
- * then renders the real Streamdown content. This gives the browser
- * a painted placeholder when the user scrolls fast and virtualised
- * items mount in rapid succession.
- */
-const BlockItem = memo(function BlockItem({
-  content,
-  isComplete,
-  isActive,
-}: {
-  content: string;
-  isComplete: boolean;
-  isActive: boolean;
-}) {
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    // Two rAF frames ≈ 32 ms — long enough to paint the skeleton,
-    // short enough to be invisible during normal scrolling.
-    const outer = requestAnimationFrame(() => {
-      const inner = requestAnimationFrame(() => setReady(true));
-      // Store inner id so we can cancel properly
-      frameRef = inner;
-    });
-    let frameRef = 0;
-    return () => {
-      cancelAnimationFrame(outer);
-      cancelAnimationFrame(frameRef);
-    };
-  }, []);
-
-  // Never delay the active (currently streaming) block
-  if (!ready && isComplete) {
-    return (
-      <div className="block-loading">
-        <div className="block-loading-spinner" />
-      </div>
-    );
-  }
-
-  return <StreamdownBlock content={content} isActive={isActive} />;
 });
 
 // ─── Public component ──────────────────────────────────────────────
@@ -123,9 +79,8 @@ export function VirtualizedStream({
               transform: `translateY(${item.start}px)`,
             }}
           >
-            <BlockItem
+            <StreamdownBlock
               content={block.content}
-              isComplete={block.isComplete}
               isActive={isActive}
             />
           </div>
